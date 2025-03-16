@@ -3,87 +3,108 @@ package pagerduty
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 
 	"github.com/TwiN/gatus/v5/alerting/alert"
 	"github.com/TwiN/gatus/v5/client"
-	"github.com/TwiN/gatus/v5/core"
+	"github.com/TwiN/gatus/v5/config/endpoint"
+	"github.com/TwiN/logr"
+	"gopkg.in/yaml.v3"
 )
 
-const (
-	restAPIURL = "https://events.pagerduty.com/v2/enqueue"
+const restAPIURL = "https://events.pagerduty.com/v2/enqueue"
+
+var (
+	ErrIntegrationKeyNotSet   = errors.New("integration-key must have exactly 32 characters")
+	ErrDuplicateGroupOverride = errors.New("duplicate group override")
 )
 
-// AlertProvider is the configuration necessary for sending an alert using PagerDuty
-type AlertProvider struct {
-	IntegrationKey string `yaml:"integration-key"`
-
-	// DefaultAlert is the default alert configuration to use for endpoints with an alert of the appropriate type
-	DefaultAlert *alert.Alert `yaml:"default-alert,omitempty"`
-
-	// Overrides is a list of Override that may be prioritized over the default configuration
-	Overrides []Override `yaml:"overrides,omitempty"`
-}
-
-// Override is a case under which the default integration is overridden
-type Override struct {
-	Group          string `yaml:"group"`
+type Config struct {
 	IntegrationKey string `yaml:"integration-key"`
 }
 
-// IsValid returns whether the provider's configuration is valid
-func (provider *AlertProvider) IsValid() bool {
-	registeredGroups := make(map[string]bool)
-	if provider.Overrides != nil {
-		for _, override := range provider.Overrides {
-			if isAlreadyRegistered := registeredGroups[override.Group]; isAlreadyRegistered || override.Group == "" || len(override.IntegrationKey) != 32 {
-				return false
-			}
-			registeredGroups[override.Group] = true
-		}
+func (cfg *Config) Validate() error {
+	if len(cfg.IntegrationKey) != 32 {
+		return ErrIntegrationKeyNotSet
 	}
-	// Either the default integration key has the right length, or there are overrides who are properly configured.
-	return len(provider.IntegrationKey) == 32 || len(provider.Overrides) != 0
+	return nil
 }
 
-// Send an alert using the provider
-//
-// Relevant: https://developer.pagerduty.com/docs/events-api-v2/trigger-events/
-func (provider *AlertProvider) Send(endpoint *core.Endpoint, alert *alert.Alert, result *core.Result, resolved bool) error {
-	buffer := bytes.NewBuffer(provider.buildRequestBody(endpoint, alert, result, resolved))
+func (cfg *Config) Merge(override *Config) {
+	if len(override.IntegrationKey) > 0 {
+		cfg.IntegrationKey = override.IntegrationKey
+	}
+}
+
+type AlertProvider struct {
+	DefaultConfig Config       `yaml:",inline"`
+	DefaultAlert  *alert.Alert `yaml:"default-alert,omitempty"`
+	Overrides     []Override   `yaml:"overrides,omitempty"`
+}
+
+type Override struct {
+	Group  string `yaml:"group"`
+	Config `yaml:",inline"`
+}
+
+func (provider *AlertProvider) Validate() error {
+	registeredGroups := make(map[string]bool)
+	for _, override := range provider.Overrides {
+		if isAlreadyRegistered := registeredGroups[override.Group]; isAlreadyRegistered || override.Group == "" {
+			return ErrDuplicateGroupOverride
+		}
+		registeredGroups[override.Group] = true
+	}
+	return provider.DefaultConfig.Validate()
+}
+
+func (provider *AlertProvider) Send(ep *endpoint.Endpoint, alert *alert.Alert, result *endpoint.Result, resolved bool) error {
+	cfg, err := provider.GetConfig(ep.Group, alert)
+	if err != nil {
+		return err
+	}
+
+	requestBody := provider.buildRequestBody(cfg, ep, alert, result, resolved)
+	buffer := bytes.NewBuffer(requestBody)
 	request, err := http.NewRequest(http.MethodPost, restAPIURL, buffer)
 	if err != nil {
 		return err
 	}
 	request.Header.Set("Content-Type", "application/json")
-	response, err := client.GetHTTPClient(nil).Do(request)
+
+	client := client.GetHTTPClient(nil)
+	response, err := client.Do(request)
 	if err != nil {
 		return err
 	}
 	defer response.Body.Close()
+
+	// Read response body
+	body, readErr := io.ReadAll(response.Body)
+	if readErr != nil {
+		return fmt.Errorf("failed to read response body: %w", readErr)
+	}
+
 	if response.StatusCode > 399 {
-		body, _ := io.ReadAll(response.Body)
 		return fmt.Errorf("call to provider alert returned status code %d: %s", response.StatusCode, string(body))
 	}
+
 	if alert.IsSendingOnResolved() {
 		if resolved {
-			// The alert has been resolved and there's no error, so we can clear the alert's ResolveKey
 			alert.ResolveKey = ""
 		} else {
-			// We need to retrieve the resolve key from the response
-			body, err := io.ReadAll(response.Body)
 			var payload pagerDutyResponsePayload
 			if err = json.Unmarshal(body, &payload); err != nil {
-				// Silently fail. We don't want to create tons of alerts just because we failed to parse the body.
-				log.Printf("[pagerduty][Send] Ran into error unmarshaling pagerduty response: %s", err.Error())
+				logr.Errorf("[pagerduty.Send] Failed to decode PagerDuty response: %s", err.Error())
 			} else {
 				alert.ResolveKey = payload.DedupKey
 			}
 		}
 	}
+
 	return nil
 }
 
@@ -100,20 +121,19 @@ type Payload struct {
 	Severity string `json:"severity"`
 }
 
-// buildRequestBody builds the request body for the provider
-func (provider *AlertProvider) buildRequestBody(endpoint *core.Endpoint, alert *alert.Alert, result *core.Result, resolved bool) []byte {
-	var message, eventAction, resolveKey string
+func (provider *AlertProvider) buildRequestBody(cfg *Config, ep *endpoint.Endpoint, alert *alert.Alert, result *endpoint.Result, resolved bool) []byte {
+	eventAction := "trigger"
+	resolveKey := ""
+
 	if resolved {
-		message = fmt.Sprintf("RESOLVED: %s - %s", endpoint.DisplayName(), alert.GetDescription())
 		eventAction = "resolve"
 		resolveKey = alert.ResolveKey
-	} else {
-		message = fmt.Sprintf("TRIGGERED: %s - %s", endpoint.DisplayName(), alert.GetDescription())
-		eventAction = "trigger"
-		resolveKey = ""
 	}
+
+	message := fmt.Sprintf("%s: %s - %s", eventAction, ep.DisplayName(), alert.GetDescription())
+
 	body, _ := json.Marshal(Body{
-		RoutingKey:  provider.getIntegrationKeyForGroup(endpoint.Group),
+		RoutingKey:  cfg.IntegrationKey,
 		DedupKey:    resolveKey,
 		EventAction: eventAction,
 		Payload: Payload{
@@ -125,37 +145,41 @@ func (provider *AlertProvider) buildRequestBody(endpoint *core.Endpoint, alert *
 	return body
 }
 
-// Returns PagerDuty severity based on result severity represented as a string
-func (provider *AlertProvider) pagerDutySeverity(result *core.Result) string {
-	switch severity := result.Severity; {
-	case severity.Critical:
-		return "critical"
-	case severity.High:
-		return "error"
-	case severity.Medium:
-		return "warning"
-	case severity.Low:
+func (provider *AlertProvider) pagerDutySeverity(result *endpoint.Result) string {
+	if result.Success {
 		return "info"
-	default:
-		return "critical"
 	}
+	return "critical"
 }
 
-// getIntegrationKeyForGroup returns the appropriate pagerduty integration key for a given group
-func (provider *AlertProvider) getIntegrationKeyForGroup(group string) string {
-	if provider.Overrides != nil {
-		for _, override := range provider.Overrides {
-			if group == override.Group {
-				return override.IntegrationKey
-			}
+func (provider *AlertProvider) GetConfig(group string, alert *alert.Alert) (*Config, error) {
+	cfg := provider.DefaultConfig
+	for _, override := range provider.Overrides {
+		if group == override.Group {
+			cfg.Merge(&override.Config)
+			break
 		}
 	}
-	return provider.IntegrationKey
+
+	if len(alert.ProviderOverride) != 0 {
+		overrideConfig := Config{}
+		if err := yaml.Unmarshal(alert.ProviderOverrideAsBytes(), &overrideConfig); err != nil {
+			return nil, err
+		}
+		cfg.Merge(&overrideConfig)
+	}
+
+	err := cfg.Validate()
+	return &cfg, err
 }
 
-// GetDefaultAlert returns the provider's default alert configuration
-func (provider AlertProvider) GetDefaultAlert() *alert.Alert {
+func (provider *AlertProvider) GetDefaultAlert() *alert.Alert {
 	return provider.DefaultAlert
+}
+
+func (provider *AlertProvider) ValidateOverrides(group string, alert *alert.Alert) error {
+	_, err := provider.GetConfig(group, alert)
+	return err
 }
 
 type pagerDutyResponsePayload struct {
