@@ -124,13 +124,16 @@ type Payload struct {
 func (provider *AlertProvider) buildRequestBody(cfg *Config, ep *endpoint.Endpoint, alert *alert.Alert, result *endpoint.Result, resolved bool) []byte {
 	eventAction := "trigger"
 	resolveKey := ""
-
+	msg := ""
 	if resolved {
 		eventAction = "resolve"
 		resolveKey = alert.ResolveKey
+		msg = "RESOLVED"
+	} else {
+		msg = "TRIGGERED"
 	}
 
-	message := fmt.Sprintf("%s: %s - %s", eventAction, ep.DisplayName(), alert.GetDescription())
+	message := fmt.Sprintf("%s: %s - %s", msg, ep.DisplayName(), alert.GetDescription())
 
 	body, _ := json.Marshal(Body{
 		RoutingKey:  cfg.IntegrationKey,
