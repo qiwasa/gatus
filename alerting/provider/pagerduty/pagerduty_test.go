@@ -140,7 +140,7 @@ func TestAlertProvider_buildRequestBody(t *testing.T) {
 			Provider:     AlertProvider{DefaultConfig: Config{IntegrationKey: "00000000000000000000000000000000"}},
 			Alert:        alert.Alert{Description: &description},
 			Resolved:     false,
-			ExpectedBody: "{\"routing_key\":\"00000000000000000000000000000000\",\"dedup_key\":\"\",\"event_action\":\"trigger\",\"payload\":{\"summary\":\"trigger: endpoint-name - test\",\"source\":\"Gatus\",\"severity\":\"critical\"}}",
+			ExpectedBody: "{\"routing_key\":\"00000000000000000000000000000000\",\"dedup_key\":\"\",\"event_action\":\"trigger\",\"payload\":{\"summary\":\"TRIGGERED: endpoint-name - test\",\"source\":\"Gatus\",\"severity\":\"critical\"}}",
 		},
 		{
 			Name:         "resolved",
