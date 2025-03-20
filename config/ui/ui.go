@@ -14,9 +14,12 @@ const (
 	defaultHeader      = "Health Status"
 	defaultLogo        = ""
 	defaultLink        = ""
+	defaultCustomCSS   = ""
 )
 
 var (
+	defaultDarkMode = true
+
 	ErrButtonValidationFailed = errors.New("invalid button configuration: missing required name or link")
 )
 
@@ -28,6 +31,15 @@ type Config struct {
 	Logo        string   `yaml:"logo,omitempty"`        // Logo to display on the page
 	Link        string   `yaml:"link,omitempty"`        // Link to open when clicking on the logo
 	Buttons     []Button `yaml:"buttons,omitempty"`     // Buttons to display below the header
+	CustomCSS   string   `yaml:"custom-css,omitempty"`  // Custom CSS to include in the page
+	DarkMode    *bool    `yaml:"dark-mode,omitempty"`   // DarkMode is a flag to enable dark mode by default
+}
+
+func (cfg *Config) IsDarkMode() bool {
+	if cfg.DarkMode != nil {
+		return *cfg.DarkMode
+	}
+	return defaultDarkMode
 }
 
 // Button is the configuration for a button on the UI
@@ -52,6 +64,8 @@ func GetDefaultConfig() *Config {
 		Header:      defaultHeader,
 		Logo:        defaultLogo,
 		Link:        defaultLink,
+		CustomCSS:   defaultCustomCSS,
+		DarkMode:    &defaultDarkMode,
 	}
 }
 
@@ -66,8 +80,17 @@ func (cfg *Config) ValidateAndSetDefaults() error {
 	if len(cfg.Header) == 0 {
 		cfg.Header = defaultHeader
 	}
-	if len(cfg.Header) == 0 {
-		cfg.Header = defaultLink
+	if len(cfg.Logo) == 0 {
+		cfg.Logo = defaultLogo
+	}
+	if len(cfg.Link) == 0 {
+		cfg.Link = defaultLink
+	}
+	if len(cfg.CustomCSS) == 0 {
+		cfg.CustomCSS = defaultCustomCSS
+	}
+	if cfg.DarkMode == nil {
+		cfg.DarkMode = &defaultDarkMode
 	}
 	for _, btn := range cfg.Buttons {
 		if err := btn.Validate(); err != nil {
@@ -80,9 +103,10 @@ func (cfg *Config) ValidateAndSetDefaults() error {
 		return err
 	}
 	var buffer bytes.Buffer
-	err = t.Execute(&buffer, cfg)
-	if err != nil {
-		return err
-	}
-	return nil
+	return t.Execute(&buffer, ViewData{UI: cfg, Theme: "dark"})
+}
+
+type ViewData struct {
+	UI    *Config
+	Theme string
 }

@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/TwiN/gatus/v5/config"
-	"github.com/TwiN/gatus/v5/core"
+	"github.com/TwiN/gatus/v5/config/endpoint"
 	"github.com/TwiN/gatus/v5/storage/store"
 	"github.com/TwiN/gatus/v5/watchdog"
 )
@@ -16,19 +16,19 @@ import (
 var (
 	timestamp = time.Now()
 
-	testEndpoint = core.Endpoint{
+	testEndpoint = endpoint.Endpoint{
 		Name:                    "name",
 		Group:                   "group",
 		URL:                     "https://example.org/what/ever",
 		Method:                  "GET",
 		Body:                    "body",
 		Interval:                30 * time.Second,
-		Conditions:              []core.Condition{core.Condition("[STATUS] == 200"), core.Condition("[RESPONSE_TIME] < 500"), core.Condition("[CERTIFICATE_EXPIRATION] < 72h")},
+		Conditions:              []endpoint.Condition{endpoint.Condition("[STATUS] == 200"), endpoint.Condition("[RESPONSE_TIME] < 500"), endpoint.Condition("[CERTIFICATE_EXPIRATION] < 72h")},
 		Alerts:                  nil,
 		NumberOfFailuresInARow:  0,
 		NumberOfSuccessesInARow: 0,
 	}
-	testSuccessfulResult = core.Result{
+	testSuccessfulResult = endpoint.Result{
 		Hostname:              "example.org",
 		IP:                    "127.0.0.1",
 		HTTPStatus:            200,
@@ -38,7 +38,7 @@ var (
 		Timestamp:             timestamp,
 		Duration:              150 * time.Millisecond,
 		CertificateExpiration: 10 * time.Hour,
-		ConditionResults: []*core.ConditionResult{
+		ConditionResults: []*endpoint.ConditionResult{
 			{
 				Condition: "[STATUS] == 200",
 				Success:   true,
@@ -53,7 +53,7 @@ var (
 			},
 		},
 	}
-	testUnsuccessfulResult = core.Result{
+	testUnsuccessfulResult = endpoint.Result{
 		Hostname:              "example.org",
 		IP:                    "127.0.0.1",
 		HTTPStatus:            200,
@@ -63,7 +63,7 @@ var (
 		Timestamp:             timestamp,
 		Duration:              750 * time.Millisecond,
 		CertificateExpiration: 10 * time.Hour,
-		ConditionResults: []*core.ConditionResult{
+		ConditionResults: []*endpoint.ConditionResult{
 			{
 				Condition: "[STATUS] == 200",
 				Success:   true,
@@ -85,7 +85,7 @@ func TestEndpointStatus(t *testing.T) {
 	defer cache.Clear()
 	cfg := &config.Config{
 		Metrics: true,
-		Endpoints: []*core.Endpoint{
+		Endpoints: []*endpoint.Endpoint{
 			{
 				Name:  "frontend",
 				Group: "core",
@@ -96,8 +96,8 @@ func TestEndpointStatus(t *testing.T) {
 			},
 		},
 	}
-	watchdog.UpdateEndpointStatuses(cfg.Endpoints[0], &core.Result{Success: true, Duration: time.Millisecond, Timestamp: time.Now()})
-	watchdog.UpdateEndpointStatuses(cfg.Endpoints[1], &core.Result{Success: false, Duration: time.Second, Timestamp: time.Now()})
+	watchdog.UpdateEndpointStatuses(cfg.Endpoints[0], &endpoint.Result{Success: true, Duration: time.Millisecond, Timestamp: time.Now()})
+	watchdog.UpdateEndpointStatuses(cfg.Endpoints[1], &endpoint.Result{Success: false, Duration: time.Second, Timestamp: time.Now()})
 	api := New(cfg)
 	router := api.Router()
 	type Scenario struct {
@@ -169,19 +169,19 @@ func TestEndpointStatuses(t *testing.T) {
 			Name:         "no-pagination",
 			Path:         "/api/v1/endpoints/statuses",
 			ExpectedCode: http.StatusOK,
-			ExpectedBody: `[{"name":"name","group":"group","key":"group_name","results":[{"status":200,"hostname":"example.org","duration":150000000,"conditionResults":[{"condition":"[STATUS] == 200","success":true},{"condition":"[RESPONSE_TIME] \u003c 500","success":true},{"condition":"[CERTIFICATE_EXPIRATION] \u003c 72h","success":true}],"success":true,"timestamp":"0001-01-01T00:00:00Z"},{"status":200,"hostname":"example.org","duration":750000000,"errors":["error-1","error-2"],"conditionResults":[{"condition":"[STATUS] == 200","success":true},{"condition":"[RESPONSE_TIME] \u003c 500","success":false},{"condition":"[CERTIFICATE_EXPIRATION] \u003c 72h","success":false}],"success":false,"timestamp":"0001-01-01T00:00:00Z"}]}]`,
+			ExpectedBody: `[{"name":"name","group":"group","key":"group_name","results":[{"status":200,"hostname":"example.org","duration":150000000,"conditionResults":[{"condition":"[STATUS] == 200","success":true},{"condition":"[RESPONSE_TIME] \u003c 500","success":true},{"condition":"[CERTIFICATE_EXPIRATION] \u003c 72h","success":true}],"success":true,"timestamp":"0001-01-01T00:00:00Z","severity_status":0},{"status":200,"hostname":"example.org","duration":750000000,"errors":["error-1","error-2"],"conditionResults":[{"condition":"[STATUS] == 200","success":true},{"condition":"[RESPONSE_TIME] \u003c 500","success":false},{"condition":"[CERTIFICATE_EXPIRATION] \u003c 72h","success":false}],"success":false,"timestamp":"0001-01-01T00:00:00Z","severity_status":0}]}]`,
 		},
 		{
 			Name:         "pagination-first-result",
 			Path:         "/api/v1/endpoints/statuses?page=1&pageSize=1",
 			ExpectedCode: http.StatusOK,
-			ExpectedBody: `[{"name":"name","group":"group","key":"group_name","results":[{"status":200,"hostname":"example.org","duration":750000000,"errors":["error-1","error-2"],"conditionResults":[{"condition":"[STATUS] == 200","success":true},{"condition":"[RESPONSE_TIME] \u003c 500","success":false},{"condition":"[CERTIFICATE_EXPIRATION] \u003c 72h","success":false}],"success":false,"timestamp":"0001-01-01T00:00:00Z"}]}]`,
+			ExpectedBody: `[{"name":"name","group":"group","key":"group_name","results":[{"status":200,"hostname":"example.org","duration":750000000,"errors":["error-1","error-2"],"conditionResults":[{"condition":"[STATUS] == 200","success":true},{"condition":"[RESPONSE_TIME] \u003c 500","success":false},{"condition":"[CERTIFICATE_EXPIRATION] \u003c 72h","success":false}],"success":false,"timestamp":"0001-01-01T00:00:00Z","severity_status":0}]}]`,
 		},
 		{
 			Name:         "pagination-second-result",
 			Path:         "/api/v1/endpoints/statuses?page=2&pageSize=1",
 			ExpectedCode: http.StatusOK,
-			ExpectedBody: `[{"name":"name","group":"group","key":"group_name","results":[{"status":200,"hostname":"example.org","duration":150000000,"conditionResults":[{"condition":"[STATUS] == 200","success":true},{"condition":"[RESPONSE_TIME] \u003c 500","success":true},{"condition":"[CERTIFICATE_EXPIRATION] \u003c 72h","success":true}],"success":true,"timestamp":"0001-01-01T00:00:00Z"}]}]`,
+			ExpectedBody: `[{"name":"name","group":"group","key":"group_name","results":[{"status":200,"hostname":"example.org","duration":150000000,"conditionResults":[{"condition":"[STATUS] == 200","success":true},{"condition":"[RESPONSE_TIME] \u003c 500","success":true},{"condition":"[CERTIFICATE_EXPIRATION] \u003c 72h","success":true}],"success":true,"timestamp":"0001-01-01T00:00:00Z","severity_status":0}]}]`,
 		},
 		{
 			Name:         "pagination-no-results",
@@ -193,7 +193,7 @@ func TestEndpointStatuses(t *testing.T) {
 			Name:         "invalid-pagination-should-fall-back-to-default",
 			Path:         "/api/v1/endpoints/statuses?page=INVALID&pageSize=INVALID",
 			ExpectedCode: http.StatusOK,
-			ExpectedBody: `[{"name":"name","group":"group","key":"group_name","results":[{"status":200,"hostname":"example.org","duration":150000000,"conditionResults":[{"condition":"[STATUS] == 200","success":true},{"condition":"[RESPONSE_TIME] \u003c 500","success":true},{"condition":"[CERTIFICATE_EXPIRATION] \u003c 72h","success":true}],"success":true,"timestamp":"0001-01-01T00:00:00Z"},{"status":200,"hostname":"example.org","duration":750000000,"errors":["error-1","error-2"],"conditionResults":[{"condition":"[STATUS] == 200","success":true},{"condition":"[RESPONSE_TIME] \u003c 500","success":false},{"condition":"[CERTIFICATE_EXPIRATION] \u003c 72h","success":false}],"success":false,"timestamp":"0001-01-01T00:00:00Z"}]}]`,
+			ExpectedBody: `[{"name":"name","group":"group","key":"group_name","results":[{"status":200,"hostname":"example.org","duration":150000000,"conditionResults":[{"condition":"[STATUS] == 200","success":true},{"condition":"[RESPONSE_TIME] \u003c 500","success":true},{"condition":"[CERTIFICATE_EXPIRATION] \u003c 72h","success":true}],"success":true,"timestamp":"0001-01-01T00:00:00Z","severity_status":0},{"status":200,"hostname":"example.org","duration":750000000,"errors":["error-1","error-2"],"conditionResults":[{"condition":"[STATUS] == 200","success":true},{"condition":"[RESPONSE_TIME] \u003c 500","success":false},{"condition":"[CERTIFICATE_EXPIRATION] \u003c 72h","success":false}],"success":false,"timestamp":"0001-01-01T00:00:00Z","severity_status":0}]}]`,
 		},
 	}
 

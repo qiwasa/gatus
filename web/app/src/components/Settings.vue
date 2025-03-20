@@ -3,7 +3,7 @@
     <div class="text-xs text-gray-600 rounded-xl py-1.5 px-1.5 dark:text-gray-200">
       <ArrowPathIcon class="w-3"/>
     </div>
-    <select class="text-center text-gray-500 text-xs dark:text-gray-200 dark:bg-gray-800 border-r border-l border-gray-300 dark:border-gray-500" id="refresh-rate" ref="refreshInterval" @change="handleChangeRefreshInterval">
+    <select class="text-center text-gray-500 text-xs dark:text-gray-200 dark:bg-gray-800 border-r border-l border-gray-300 dark:border-gray-500 pl-1" id="refresh-rate" ref="refreshInterval" @change="handleChangeRefreshInterval">
       <option value="10" :selected="refreshInterval === 10">10s</option>
       <option value="30" :selected="refreshInterval === 30">30s</option>
       <option value="60" :selected="refreshInterval === 60">1m</option>
@@ -23,6 +23,11 @@
 import { MoonIcon, SunIcon } from '@heroicons/vue/20/solid'
 import { ArrowPathIcon } from '@heroicons/vue/24/solid'
 
+function wantsDarkMode() {
+  const themeFromCookie = document.cookie.match(/theme=(dark|light);?/)?.[1];
+  return themeFromCookie === 'dark' || !themeFromCookie && (window.matchMedia('(prefers-color-scheme: dark)').matches || document.documentElement.classList.contains("dark"));
+}
+
 export default {
   name: 'Settings',
   components: {
@@ -33,7 +38,7 @@ export default {
   props: {},
   methods: {
     setRefreshInterval(seconds) {
-      sessionStorage.setItem('gatus:refresh-interval', seconds);
+      localStorage.setItem('gatus:refresh-interval', seconds);
       let that = this;
       this.refreshIntervalHandler = setInterval(function () {
         that.refreshData();
@@ -48,15 +53,15 @@ export default {
       this.setRefreshInterval(this.$refs.refreshInterval.value);
     },
     toggleDarkMode() {
-      if (localStorage.theme === 'dark') {
-        localStorage.theme = 'light';
+      if (wantsDarkMode()) {
+        document.cookie = `theme=light; path=/; max-age=31536000; samesite=strict`;
       } else {
-        localStorage.theme = 'dark';
+        document.cookie = `theme=dark; path=/; max-age=31536000; samesite=strict`;
       }
       this.applyTheme();
     },
     applyTheme() {
-      if (localStorage.theme === 'dark' || (!('theme' in localStorage) && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+      if (wantsDarkMode()) {
         this.darkMode = true;
         document.documentElement.classList.add('dark');
       } else {
@@ -70,7 +75,6 @@ export default {
       this.refreshInterval = 300;
     }
     this.setRefreshInterval(this.refreshInterval);
-    // dark mode
     this.applyTheme();
   },
   unmounted() {
@@ -78,9 +82,9 @@ export default {
   },
   data() {
     return {
-      refreshInterval: sessionStorage.getItem('gatus:refresh-interval') < 10 ? 300 : parseInt(sessionStorage.getItem('gatus:refresh-interval')),
+      refreshInterval: localStorage.getItem('gatus:refresh-interval') < 10 ? 300 : parseInt(localStorage.getItem('gatus:refresh-interval')),
       refreshIntervalHandler: 0,
-      darkMode: true
+      darkMode: wantsDarkMode()
     }
   },
 }
