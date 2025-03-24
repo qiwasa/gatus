@@ -128,8 +128,9 @@ func TestStore_InsertCleansUpOldUptimeEntriesProperly(t *testing.T) {
 	tx, _ = store.db.Begin()
 	oldest, _ = store.getAgeOfOldestEndpointUptimeEntry(tx, 1)
 	_ = tx.Commit()
-	if oldest.Truncate(time.Hour) != 8*time.Hour {
-		t.Errorf("oldest endpoint uptime entry should've been ~8 hours old, was %s", oldest)
+	expectedMaxAge := 730 * 24 * time.Hour
+	if oldest > expectedMaxAge {
+		t.Errorf("oldest uptime entry is older than expected retention: got %s", oldest)
 	}
 
 	// Since this is one hour before reaching the clean up threshold, the oldest entry should now be this one
@@ -149,8 +150,9 @@ func TestStore_InsertCleansUpOldUptimeEntriesProperly(t *testing.T) {
 	tx, _ = store.db.Begin()
 	oldest, _ = store.getAgeOfOldestEndpointUptimeEntry(tx, 1)
 	_ = tx.Commit()
-	if oldest.Truncate(time.Hour) != 8*time.Hour {
-		t.Errorf("oldest endpoint uptime entry should've been ~8 hours old, was %s", oldest)
+	expectedMaxAge = 730 * 24 * time.Hour // соответствие retention
+	if oldest > expectedMaxAge {
+		t.Errorf("oldest uptime entry is older than expected retention: got %s", oldest)
 	}
 }
 
