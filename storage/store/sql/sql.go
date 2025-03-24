@@ -31,10 +31,10 @@ const (
 	eventsCleanUpThreshold  = common.MaximumNumberOfEvents + 10  // Maximum number of events before triggering a cleanup
 	resultsCleanUpThreshold = common.MaximumNumberOfResults + 10 // Maximum number of results before triggering a cleanup
 
-	uptimeTotalEntriesMergeThreshold = 100                 // Maximum number of uptime entries before triggering a merge
-	uptimeAgeCleanUpThreshold        = 32 * 24 * time.Hour // Maximum uptime age before triggering a cleanup
-	uptimeRetention                  = 30 * 24 * time.Hour // Minimum duration that must be kept to operate as intended
-	uptimeHourlyBuffer               = 48 * time.Hour      // Number of hours to buffer from now when determining which hourly uptime entries can be merged into daily uptime entries
+	uptimeTotalEntriesMergeThreshold = 100                  // Maximum number of uptime entries before triggering a merge
+	uptimeAgeCleanUpThreshold        = 730 * 24 * time.Hour // Maximum uptime age before triggering a cleanup
+	uptimeRetention                  = 730 * 24 * time.Hour // Minimum duration that must be kept to operate as intended
+	uptimeHourlyBuffer               = 48 * time.Hour       // Number of hours to buffer from now when determining which hourly uptime entries can be merged into daily uptime entries
 
 	cacheTTL = 10 * time.Minute
 )

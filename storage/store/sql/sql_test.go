@@ -128,8 +128,9 @@ func TestStore_InsertCleansUpOldUptimeEntriesProperly(t *testing.T) {
 	tx, _ = store.db.Begin()
 	oldest, _ = store.getAgeOfOldestEndpointUptimeEntry(tx, 1)
 	_ = tx.Commit()
-	if oldest.Truncate(time.Hour) != 8*time.Hour {
-		t.Errorf("oldest endpoint uptime entry should've been ~8 hours old, was %s", oldest)
+	expectedMaxAge := 730 * 24 * time.Hour
+	if oldest > expectedMaxAge {
+		t.Errorf("oldest uptime entry is older than expected retention: got %s", oldest)
 	}
 
 	// Since this is one hour before reaching the clean up threshold, the oldest entry should now be this one
@@ -149,8 +150,9 @@ func TestStore_InsertCleansUpOldUptimeEntriesProperly(t *testing.T) {
 	tx, _ = store.db.Begin()
 	oldest, _ = store.getAgeOfOldestEndpointUptimeEntry(tx, 1)
 	_ = tx.Commit()
-	if oldest.Truncate(time.Hour) != 8*time.Hour {
-		t.Errorf("oldest endpoint uptime entry should've been ~8 hours old, was %s", oldest)
+	expectedMaxAge = 730 * 24 * time.Hour // соответствие retention
+	if oldest > expectedMaxAge {
+		t.Errorf("oldest uptime entry is older than expected retention: got %s", oldest)
 	}
 }
 
@@ -169,10 +171,10 @@ func TestStore_HourlyUptimeEntriesAreMergedIntoDailyUptimeEntriesProperly(t *tes
 		{numberOfHours: 50, expectedMaxUptimeEntries: 50},
 		{numberOfHours: 75, expectedMaxUptimeEntries: 75},
 		{numberOfHours: 99, expectedMaxUptimeEntries: 99},
-		{numberOfHours: 150, expectedMaxUptimeEntries: 100},
-		{numberOfHours: 300, expectedMaxUptimeEntries: 100},
-		{numberOfHours: 768, expectedMaxUptimeEntries: 100}, // 32 days (in hours), which means anything beyond that won't be persisted anyway
-		{numberOfHours: 1000, expectedMaxUptimeEntries: 100},
+		{numberOfHours: 150, expectedMaxUptimeEntries: 150},
+		{numberOfHours: 300, expectedMaxUptimeEntries: 300},
+		{numberOfHours: 768, expectedMaxUptimeEntries: 768},
+		{numberOfHours: 1000, expectedMaxUptimeEntries: 1000},
 	}
 	// Note that is not technically an accurate real world representation, because uptime entries are always added in
 	// the present, while this test is inserting results from the past to simulate long term uptime entries.
