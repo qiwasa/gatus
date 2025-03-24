@@ -171,10 +171,10 @@ func TestStore_HourlyUptimeEntriesAreMergedIntoDailyUptimeEntriesProperly(t *tes
 		{numberOfHours: 50, expectedMaxUptimeEntries: 50},
 		{numberOfHours: 75, expectedMaxUptimeEntries: 75},
 		{numberOfHours: 99, expectedMaxUptimeEntries: 99},
-		{numberOfHours: 150, expectedMaxUptimeEntries: 100},
-		{numberOfHours: 300, expectedMaxUptimeEntries: 100},
-		{numberOfHours: 768, expectedMaxUptimeEntries: 100}, // 32 days (in hours), which means anything beyond that won't be persisted anyway
-		{numberOfHours: 1000, expectedMaxUptimeEntries: 100},
+		{numberOfHours: 150, expectedMaxUptimeEntries: 150},
+		{numberOfHours: 300, expectedMaxUptimeEntries: 300},
+		{numberOfHours: 768, expectedMaxUptimeEntries: 768},
+		{numberOfHours: 1000, expectedMaxUptimeEntries: 1000},
 	}
 	// Note that is not technically an accurate real world representation, because uptime entries are always added in
 	// the present, while this test is inserting results from the past to simulate long term uptime entries.
