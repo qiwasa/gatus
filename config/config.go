@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -13,16 +14,18 @@ import (
 	"github.com/TwiN/gatus/v5/alerting"
 	"github.com/TwiN/gatus/v5/alerting/alert"
 	"github.com/TwiN/gatus/v5/alerting/provider"
+	"github.com/TwiN/gatus/v5/config/announcement"
 	"github.com/TwiN/gatus/v5/config/connectivity"
 	"github.com/TwiN/gatus/v5/config/endpoint"
+	"github.com/TwiN/gatus/v5/config/key"
 	"github.com/TwiN/gatus/v5/config/maintenance"
 	"github.com/TwiN/gatus/v5/config/remote"
+	"github.com/TwiN/gatus/v5/config/suite"
 	"github.com/TwiN/gatus/v5/config/ui"
 	"github.com/TwiN/gatus/v5/config/web"
 	"github.com/TwiN/gatus/v5/security"
 	"github.com/TwiN/gatus/v5/storage"
 	"github.com/TwiN/logr"
-	"github.com/gofiber/fiber/v2/log"
 	"gopkg.in/yaml.v3"
 )
 
@@ -34,6 +37,9 @@ const (
 	// DefaultFallbackConfigurationFilePath is the default fallback path that will be used to search for the
 	// configuration file if DefaultConfigurationFilePath didn't work
 	DefaultFallbackConfigurationFilePath = "config/config.yml"
+
+	// DefaultConcurrency is the default number of endpoints/suites that can be monitored concurrently
+	DefaultConcurrency = 3
 )
 
 var (
@@ -66,7 +72,13 @@ type Config struct {
 	// DisableMonitoringLock Whether to disable the monitoring lock
 	// The monitoring lock is what prevents multiple endpoints from being processed at the same time.
 	// Disabling this may lead to inaccurate response times
+	//
+	// Deprecated: Use Concurrency instead TODO: REMOVE THIS IN v6.0.0
 	DisableMonitoringLock bool `yaml:"disable-monitoring-lock,omitempty"`
+
+	// Concurrency is the maximum number of endpoints/suites that can be monitored concurrently
+	// Defaults to DefaultConcurrency. Set to 0 for unlimited concurrency.
+	Concurrency int `yaml:"concurrency,omitempty"`
 
 	// Security is the configuration for securing access to Gatus
 	Security *security.Config `yaml:"security,omitempty"`
@@ -79,6 +91,9 @@ type Config struct {
 
 	// ExternalEndpoints is the list of all external endpoints
 	ExternalEndpoints []*endpoint.ExternalEndpoint `yaml:"external-endpoints,omitempty"`
+
+	// Suites is the list of suites to monitor
+	Suites []*suite.Suite `yaml:"suites,omitempty"`
 
 	// Storage is the configuration for how the data is stored
 	Storage *storage.Config `yaml:"storage,omitempty"`
@@ -99,14 +114,39 @@ type Config struct {
 	// Connectivity is the configuration for connectivity
 	Connectivity *connectivity.Config `yaml:"connectivity,omitempty"`
 
+	// Announcements is the list of system-wide announcements
+	Announcements []*announcement.Announcement `yaml:"announcements,omitempty"`
+
 	configPath      string    // path to the file or directory from which config was loaded
 	lastFileModTime time.Time // last modification time
+}
+
+// GetUniqueExtraMetricLabels returns a slice of unique metric labels from all enabled endpoints
+// in the configuration. It iterates through each endpoint, checks if it is enabled,
+// and then collects unique labels from the endpoint's labels map.
+func (config *Config) GetUniqueExtraMetricLabels() []string {
+	labels := make([]string, 0)
+	for _, ep := range config.Endpoints {
+		if !ep.IsEnabled() {
+			continue
+		}
+		for label := range ep.ExtraLabels {
+			if contains(labels, label) {
+				continue
+			}
+			labels = append(labels, label)
+		}
+	}
+	if len(labels) > 1 {
+		sort.Strings(labels)
+	}
+	return labels
 }
 
 func (config *Config) GetEndpointByKey(key string) *endpoint.Endpoint {
 	for i := 0; i < len(config.Endpoints); i++ {
 		ep := config.Endpoints[i]
-		if ep.Key() == key {
+		if ep.Key() == strings.ToLower(key) {
 			return ep
 		}
 	}
@@ -116,7 +156,7 @@ func (config *Config) GetEndpointByKey(key string) *endpoint.Endpoint {
 func (config *Config) GetExternalEndpointByKey(key string) *endpoint.ExternalEndpoint {
 	for i := 0; i < len(config.ExternalEndpoints); i++ {
 		ee := config.ExternalEndpoints[i]
-		if ee.Key() == key {
+		if ee.Key() == strings.ToLower(key) {
 			return ee
 		}
 	}
@@ -280,6 +320,18 @@ func parseAndValidateConfigBytes(yamlBytes []byte) (config *Config, err error) {
 		if err := validateConnectivityConfig(config); err != nil {
 			return nil, err
 		}
+		if err := validateAnnouncementsConfig(config); err != nil {
+			return nil, err
+		}
+		if err := validateSuitesConfig(config); err != nil {
+			return nil, err
+		}
+		if err := validateUniqueKeys(config); err != nil {
+			return nil, err
+		}
+		validateAndSetConcurrencyDefaults(config)
+		// Cross-config changes
+		config.UI.MaximumNumberOfResults = config.Storage.MaximumNumberOfResults
 	}
 	return
 }
@@ -287,6 +339,17 @@ func parseAndValidateConfigBytes(yamlBytes []byte) (config *Config, err error) {
 func validateConnectivityConfig(config *Config) error {
 	if config.Connectivity != nil {
 		return config.Connectivity.ValidateAndSetDefaults()
+	}
+	return nil
+}
+
+func validateAnnouncementsConfig(config *Config) error {
+	if config.Announcements != nil {
+		if err := announcement.ValidateAndSetDefaults(config.Announcements); err != nil {
+			return err
+		}
+		// Sort announcements by timestamp (newest first) for API response
+		announcement.SortByTimestamp(config.Announcements)
 	}
 	return nil
 }
@@ -303,7 +366,9 @@ func validateRemoteConfig(config *Config) error {
 func validateStorageConfig(config *Config) error {
 	if config.Storage == nil {
 		config.Storage = &storage.Config{
-			Type: storage.TypeMemory,
+			Type:                   storage.TypeMemory,
+			MaximumNumberOfResults: storage.DefaultMaximumNumberOfResults,
+			MaximumNumberOfEvents:  storage.DefaultMaximumNumberOfEvents,
 		}
 	} else {
 		if err := config.Storage.ValidateAndSetDefaults(); err != nil {
@@ -361,7 +426,7 @@ func validateEndpointsConfig(config *Config) error {
 	logr.Infof("[config.validateEndpointsConfig] Validated %d endpoints", len(config.Endpoints))
 	// Validate external endpoints
 	for _, ee := range config.ExternalEndpoints {
-		logr.Debugf("[config.validateEndpointsConfig] Validating external endpoint '%s'", ee.Name)
+		logr.Debugf("[config.validateEndpointsConfig] Validating external endpoint '%s'", ee.Key())
 		if endpointKey := ee.Key(); duplicateValidationMap[endpointKey] {
 			return fmt.Errorf("invalid external endpoint %s: name and group combination must be unique", ee.Key())
 		} else {
@@ -372,6 +437,78 @@ func validateEndpointsConfig(config *Config) error {
 		}
 	}
 	logr.Infof("[config.validateEndpointsConfig] Validated %d external endpoints", len(config.ExternalEndpoints))
+	return nil
+}
+
+func validateSuitesConfig(config *Config) error {
+	if config.Suites == nil || len(config.Suites) == 0 {
+		logr.Info("[config.validateSuitesConfig] No suites configured")
+		return nil
+	}
+	suiteNames := make(map[string]bool)
+	for _, suite := range config.Suites {
+		// Check for duplicate suite names
+		if suiteNames[suite.Name] {
+			return fmt.Errorf("duplicate suite name: %s", suite.Key())
+		}
+		suiteNames[suite.Name] = true
+		// Validate the suite configuration
+		if err := suite.ValidateAndSetDefaults(); err != nil {
+			return fmt.Errorf("invalid suite '%s': %w", suite.Key(), err)
+		}
+		// Check that endpoints referenced in Store mappings use valid placeholders
+		for _, suiteEndpoint := range suite.Endpoints {
+			if suiteEndpoint.Store != nil {
+				for contextKey, placeholder := range suiteEndpoint.Store {
+					// Basic validation that the context key is a valid identifier
+					if len(contextKey) == 0 {
+						return fmt.Errorf("suite '%s' endpoint '%s' has empty context key in store mapping", suite.Key(), suiteEndpoint.Key())
+					}
+					if len(placeholder) == 0 {
+						return fmt.Errorf("suite '%s' endpoint '%s' has empty placeholder in store mapping for key '%s'", suite.Key(), suiteEndpoint.Key(), contextKey)
+					}
+				}
+			}
+		}
+	}
+	logr.Infof("[config.validateSuitesConfig] Validated %d suite(s)", len(config.Suites))
+	return nil
+}
+
+func validateUniqueKeys(config *Config) error {
+	keyMap := make(map[string]string) // key -> description for error messages
+	// Check all endpoints
+	for _, ep := range config.Endpoints {
+		epKey := ep.Key()
+		if existing, exists := keyMap[epKey]; exists {
+			return fmt.Errorf("duplicate key '%s': endpoint '%s' conflicts with %s", epKey, ep.Key(), existing)
+		}
+		keyMap[epKey] = fmt.Sprintf("endpoint '%s'", ep.Key())
+	}
+	// Check all external endpoints
+	for _, ee := range config.ExternalEndpoints {
+		eeKey := ee.Key()
+		if existing, exists := keyMap[eeKey]; exists {
+			return fmt.Errorf("duplicate key '%s': external endpoint '%s' conflicts with %s", eeKey, ee.Key(), existing)
+		}
+		keyMap[eeKey] = fmt.Sprintf("external endpoint '%s'", ee.Key())
+	}
+	// Check all suites
+	for _, suite := range config.Suites {
+		suiteKey := suite.Key()
+		if existing, exists := keyMap[suiteKey]; exists {
+			return fmt.Errorf("duplicate key '%s': suite '%s' conflicts with %s", suiteKey, suite.Key(), existing)
+		}
+		keyMap[suiteKey] = fmt.Sprintf("suite '%s'", suite.Key())
+		// Check endpoints within suites (they generate keys using suite group + endpoint name)
+		for _, ep := range suite.Endpoints {
+			epKey := key.ConvertGroupAndNameToKey(suite.Group, ep.Name)
+			if existing, exists := keyMap[epKey]; exists {
+				return fmt.Errorf("duplicate key '%s': endpoint '%s' in suite '%s' conflicts with %s", epKey, epKey, suite.Key(), existing)
+			}
+			keyMap[epKey] = fmt.Sprintf("endpoint '%s' in suite '%s'", epKey, suite.Key())
+		}
+	}
 	return nil
 }
 
@@ -400,6 +537,7 @@ func validateAlertingConfig(alertingConfig *alerting.Config, endpoints []*endpoi
 	alertTypes := []alert.Type{
 		alert.TypeAWSSES,
 		alert.TypeCustom,
+		alert.TypeDatadog,
 		alert.TypeDiscord,
 		alert.TypeEmail,
 		alert.TypeGitHub,
@@ -407,21 +545,36 @@ func validateAlertingConfig(alertingConfig *alerting.Config, endpoints []*endpoi
 		alert.TypeGitea,
 		alert.TypeGoogleChat,
 		alert.TypeGotify,
+		alert.TypeHomeAssistant,
+		alert.TypeIFTTT,
+		alert.TypeIlert,
+		alert.TypeIncidentIO,
 		alert.TypeJetBrainsSpace,
+		alert.TypeLine,
 		alert.TypeMatrix,
 		alert.TypeMattermost,
 		alert.TypeMessagebird,
+		alert.TypeNewRelic,
 		alert.TypeNtfy,
 		alert.TypeOpsgenie,
 		alert.TypePagerDuty,
+		alert.TypePlivo,
 		alert.TypePushover,
+		alert.TypeRocketChat,
+		alert.TypeSendGrid,
+		alert.TypeSignal,
+		alert.TypeSIGNL4,
 		alert.TypeSlack,
+		alert.TypeSplunk,
+		alert.TypeSquadcast,
 		alert.TypeTeams,
 		alert.TypeTeamsWorkflows,
 		alert.TypeTelegram,
 		alert.TypeTwilio,
+		alert.TypeVonage,
+		alert.TypeWebex,
+		alert.TypeZapier,
 		alert.TypeZulip,
-		alert.TypeIncidentIO,
 	}
 	var validProviders, invalidProviders []alert.Type
 	for _, alertType := range alertTypes {
@@ -438,7 +591,7 @@ func validateAlertingConfig(alertingConfig *alerting.Config, endpoints []*endpoi
 								// Validate the endpoint alert's overrides, if applicable
 								if len(endpointAlert.ProviderOverride) > 0 {
 									if err = alertProvider.ValidateOverrides(ep.Group, endpointAlert); err != nil {
-										log.Warnf("[config.validateAlertingConfig] endpoint with key=%s has invalid overrides for provider=%s: %s", ep.Key(), alertType, err.Error())
+										logr.Warnf("[config.validateAlertingConfig] endpoint with key=%s has invalid overrides for provider=%s: %s", ep.Key(), alertType, err.Error())
 									}
 								}
 							}
@@ -452,7 +605,7 @@ func validateAlertingConfig(alertingConfig *alerting.Config, endpoints []*endpoi
 								// Validate the endpoint alert's overrides, if applicable
 								if len(endpointAlert.ProviderOverride) > 0 {
 									if err = alertProvider.ValidateOverrides(ee.Group, endpointAlert); err != nil {
-										log.Warnf("[config.validateAlertingConfig] endpoint with key=%s has invalid overrides for provider=%s: %s", ee.Key(), alertType, err.Error())
+										logr.Warnf("[config.validateAlertingConfig] endpoint with key=%s has invalid overrides for provider=%s: %s", ee.Key(), alertType, err.Error())
 									}
 								}
 							}
@@ -470,4 +623,18 @@ func validateAlertingConfig(alertingConfig *alerting.Config, endpoints []*endpoi
 		}
 	}
 	logr.Infof("[config.validateAlertingConfig] configuredProviders=%s; ignoredProviders=%s", validProviders, invalidProviders)
+}
+
+func validateAndSetConcurrencyDefaults(config *Config) {
+	if config.DisableMonitoringLock {
+		config.Concurrency = 0
+		logr.Warn("WARNING: The 'disable-monitoring-lock' configuration has been deprecated and will be removed in v6.0.0")
+		logr.Warn("WARNING: Please set 'concurrency: 0' instead")
+		logr.Debug("[config.validateAndSetConcurrencyDefaults] DisableMonitoringLock is true, setting unlimited (0) concurrency")
+	} else if config.Concurrency <= 0 && !config.DisableMonitoringLock {
+		config.Concurrency = DefaultConcurrency
+		logr.Debugf("[config.validateAndSetConcurrencyDefaults] Setting default concurrency to %d", config.Concurrency)
+	} else {
+		logr.Debugf("[config.validateAndSetConcurrencyDefaults] Using configured concurrency of %d", config.Concurrency)
+	}
 }
