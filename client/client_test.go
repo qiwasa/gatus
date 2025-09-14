@@ -39,28 +39,42 @@ func TestGetHTTPClient(t *testing.T) {
 	}
 }
 
+func TestRdapQuery(t *testing.T) {
+	if _, err := rdapQuery("1.1.1.1"); err == nil {
+		t.Error("expected an error due to the invalid domain type")
+	}
+	if _, err := rdapQuery("eurid.eu"); err == nil {
+		t.Error("expected an error as there is no RDAP support currently in .eu")
+	}
+	if response, err := rdapQuery("example.com"); err != nil {
+		t.Fatal("expected no error, got", err.Error())
+	} else if response.ExpirationDate.Unix() <= 0 {
+		t.Error("expected to have a valid expiry date, got", response.ExpirationDate.Unix())
+	}
+}
+
 func TestGetDomainExpiration(t *testing.T) {
 	t.Parallel()
-	if domainExpiration, err := GetDomainExpiration("example.com"); err != nil {
+	if domainExpiration, err := GetDomainExpiration("gatus.io"); err != nil {
 		t.Fatalf("expected error to be nil, but got: `%s`", err)
 	} else if domainExpiration <= 0 {
 		t.Error("expected domain expiration to be higher than 0")
 	}
-	if domainExpiration, err := GetDomainExpiration("example.com"); err != nil {
+	if domainExpiration, err := GetDomainExpiration("gatus.io"); err != nil {
 		t.Errorf("expected error to be nil, but got: `%s`", err)
 	} else if domainExpiration <= 0 {
 		t.Error("expected domain expiration to be higher than 0")
 	}
 	// Hack to pretend like the domain is expiring in 1 hour, which should trigger a refresh
-	whoisExpirationDateCache.SetWithTTL("example.com", time.Now().Add(time.Hour), 25*time.Hour)
-	if domainExpiration, err := GetDomainExpiration("example.com"); err != nil {
+	whoisExpirationDateCache.SetWithTTL("gatus.io", time.Now().Add(time.Hour), 25*time.Hour)
+	if domainExpiration, err := GetDomainExpiration("gatus.io"); err != nil {
 		t.Errorf("expected error to be nil, but got: `%s`", err)
 	} else if domainExpiration <= 0 {
 		t.Error("expected domain expiration to be higher than 0")
 	}
 	// Make sure the refresh works when the ttl is <24 hours
-	whoisExpirationDateCache.SetWithTTL("example.com", time.Now().Add(35*time.Hour), 23*time.Hour)
-	if domainExpiration, err := GetDomainExpiration("example.com"); err != nil {
+	whoisExpirationDateCache.SetWithTTL("gatus.io", time.Now().Add(35*time.Hour), 23*time.Hour)
+	if domainExpiration, err := GetDomainExpiration("gatus.io"); err != nil {
 		t.Errorf("expected error to be nil, but got: `%s`", err)
 	} else if domainExpiration <= 0 {
 		t.Error("expected domain expiration to be higher than 0")
@@ -119,6 +133,7 @@ func TestCanPerformStartTLS(t *testing.T) {
 	type args struct {
 		address  string
 		insecure bool
+		dnsresolver string
 	}
 	tests := []struct {
 		name          string
@@ -150,11 +165,20 @@ func TestCanPerformStartTLS(t *testing.T) {
 			wantConnected: true,
 			wantErr:       false,
 		},
+		{
+			name: "dns resolver",
+			args: args{
+				address: "smtp.gmail.com:587",
+				dnsresolver: "tcp://1.1.1.1:53",
+			},
+			wantConnected: true,
+			wantErr:       false,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			connected, _, err := CanPerformStartTLS(tt.args.address, &Config{Insecure: tt.args.insecure, Timeout: 5 * time.Second})
+			connected, _, err := CanPerformStartTLS(tt.args.address, &Config{Insecure: tt.args.insecure, Timeout: 5 * time.Second, DNSResolver: tt.args.dnsresolver})
 			if (err != nil) != tt.wantErr {
 				t.Errorf("CanPerformStartTLS() err=%v, wantErr=%v", err, tt.wantErr)
 				return
@@ -223,7 +247,7 @@ func TestCanPerformTLS(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			connected, _, err := CanPerformTLS(tt.args.address, &Config{Insecure: tt.args.insecure, Timeout: 5 * time.Second})
+			connected, _, _, err := CanPerformTLS(tt.args.address, "", &Config{Insecure: tt.args.insecure, Timeout: 5 * time.Second})
 			if (err != nil) != tt.wantErr {
 				t.Errorf("CanPerformTLS() err=%v, wantErr=%v", err, tt.wantErr)
 				return
@@ -235,11 +259,13 @@ func TestCanPerformTLS(t *testing.T) {
 	}
 }
 
-func TestCanCreateTCPConnection(t *testing.T) {
-	if CanCreateTCPConnection("127.0.0.1", &Config{Timeout: 5 * time.Second}) {
+func TestCanCreateConnection(t *testing.T) {
+	connected, _ := CanCreateNetworkConnection("tcp", "127.0.0.1", "", &Config{Timeout: 5 * time.Second})
+	if connected {
 		t.Error("should've failed, because there's no port in the address")
 	}
-	if !CanCreateTCPConnection("1.1.1.1:53", &Config{Timeout: 5 * time.Second}) {
+	connected, _ = CanCreateNetworkConnection("tcp", "1.1.1.1:53", "", &Config{Timeout: 5 * time.Second})
+	if !connected {
 		t.Error("should've succeeded, because that IP should always™ be up")
 	}
 }
@@ -303,11 +329,11 @@ func TestHttpClientProvidesOAuth2BearerToken(t *testing.T) {
 }
 
 func TestQueryWebSocket(t *testing.T) {
-	_, _, err := QueryWebSocket("", "body", &Config{Timeout: 2 * time.Second})
+	_, _, err := QueryWebSocket("", "body", nil, &Config{Timeout: 2 * time.Second})
 	if err == nil {
 		t.Error("expected an error due to the address being invalid")
 	}
-	_, _, err = QueryWebSocket("ws://example.org", "body", &Config{Timeout: 2 * time.Second})
+	_, _, err = QueryWebSocket("ws://example.org", "body", nil, &Config{Timeout: 2 * time.Second})
 	if err == nil {
 		t.Error("expected an error due to the target not being websocket-friendly")
 	}

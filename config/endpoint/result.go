@@ -4,24 +4,7 @@ import (
 	"time"
 )
 
-// Severity type
-type Severity struct {
-	Low, Medium, High, Critical bool
-}
-
-// Severity status type
-type SeverityStatus int
-
-// Severity status enums
-const (
-	None SeverityStatus = iota
-	Low
-	Medium
-	High
-	Critical
-)
-
-// Result of the evaluation of a Endpoint
+// Result of the evaluation of an Endpoint
 type Result struct {
 	// HTTPStatus is the HTTP response status code
 	HTTPStatus int `json:"status,omitempty"`
@@ -67,11 +50,17 @@ type Result struct {
 	// It is used for health evaluation as well as debugging purposes.
 	Body []byte `json:"-"`
 
-	// Total severity counted from all ConditionResults
-	Severity Severity `json:"-"`
+	///////////////////////////////////////////////////////////////////////
+	// Below is used only for the UI and is not persisted in the storage //
+	///////////////////////////////////////////////////////////////////////
+	port string `yaml:"-"` // used for endpoints[].ui.hide-port
 
-	// Result serverity status (detrmined by Result.Severity)
-	SeverityStatus SeverityStatus `json:"severity_status"`
+	///////////////////////////////////
+	// BELOW IS ONLY USED FOR SUITES //
+	///////////////////////////////////
+	// Name of the endpoint (ONLY USED FOR SUITES)
+	// Group is not needed because it's inherited from the suite
+	Name string `json:"name,omitempty"`
 }
 
 // AddError adds an error to the result's list of errors.
@@ -84,21 +73,4 @@ func (r *Result) AddError(error string) {
 		}
 	}
 	r.Errors = append(r.Errors, error)
-}
-
-// Determines severity status by highest result severity priority found.
-// Returns SeverityStatus.
-func (r *Result) determineSeverityStatus() SeverityStatus {
-	switch severity := r.Severity; {
-	case severity.Critical:
-		return Critical
-	case severity.High:
-		return High
-	case severity.Medium:
-		return Medium
-	case severity.Low:
-		return Low
-	default:
-		return Critical
-	}
 }

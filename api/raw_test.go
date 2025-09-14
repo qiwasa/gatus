@@ -33,8 +33,8 @@ func TestRawDataEndpoint(t *testing.T) {
 	cfg.Endpoints[0].UIConfig = ui.GetDefaultConfig()
 	cfg.Endpoints[1].UIConfig = ui.GetDefaultConfig()
 
-	watchdog.UpdateEndpointStatuses(cfg.Endpoints[0], &endpoint.Result{Success: true, Connected: true, Duration: time.Millisecond, Timestamp: time.Now()})
-	watchdog.UpdateEndpointStatuses(cfg.Endpoints[1], &endpoint.Result{Success: false, Connected: false, Duration: time.Second, Timestamp: time.Now()})
+	watchdog.UpdateEndpointStatus(cfg.Endpoints[0], &endpoint.Result{Success: true, Connected: true, Duration: time.Millisecond, Timestamp: time.Now()})
+	watchdog.UpdateEndpointStatus(cfg.Endpoints[1], &endpoint.Result{Success: false, Connected: false, Duration: time.Second, Timestamp: time.Now()})
 	api := New(cfg)
 	router := api.Router()
 	type Scenario struct {
@@ -72,6 +72,36 @@ func TestRawDataEndpoint(t *testing.T) {
 		{
 			Name:         "raw-uptime-for-invalid-key",
 			Path:         "/api/v1/endpoints/invalid_key/uptimes/7d",
+			ExpectedCode: http.StatusNotFound,
+		},
+		{
+			Name:         "raw-response-times-1h",
+			Path:         "/api/v1/endpoints/core_frontend/response-times/1h",
+			ExpectedCode: http.StatusOK,
+		},
+		{
+			Name:         "raw-response-times-24h",
+			Path:         "/api/v1/endpoints/core_backend/response-times/24h",
+			ExpectedCode: http.StatusOK,
+		},
+		{
+			Name:         "raw-response-times-7d",
+			Path:         "/api/v1/endpoints/core_frontend/response-times/7d",
+			ExpectedCode: http.StatusOK,
+		},
+		{
+			Name:         "raw-response-times-30d",
+			Path:         "/api/v1/endpoints/core_frontend/response-times/30d",
+			ExpectedCode: http.StatusOK,
+		},
+		{
+			Name:         "raw-response-times-with-invalid-duration",
+			Path:         "/api/v1/endpoints/core_backend/response-times/3d",
+			ExpectedCode: http.StatusBadRequest,
+		},
+		{
+			Name:         "raw-response-times-for-invalid-key",
+			Path:         "/api/v1/endpoints/invalid_key/response-times/7d",
 			ExpectedCode: http.StatusNotFound,
 		},
 	}
